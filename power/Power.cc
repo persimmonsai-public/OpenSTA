@@ -28,6 +28,7 @@
 #include <array>
 #include <cmath>      // abs
 #include <cstddef>
+#include <cstdlib>
 #include <functional>
 #include <limits>
 #include <map>
@@ -105,6 +106,16 @@ static EnumNameMap<PwrActivityOrigin> pwr_activity_origin_map = {
     {PwrActivityOrigin::clock, "clock"},
     {PwrActivityOrigin::constant, "constant"},
     {PwrActivityOrigin::unknown, "unknown"}};
+
+// The glitch estimate is off unless STA_POWER_GLITCH_ESTIMATE is set to
+// something other than "" or "0".
+static bool
+glitchEstimateEnabled()
+{
+  const char *env = std::getenv("STA_POWER_GLITCH_ESTIMATE");
+  return env != nullptr && env[0] != '\0'
+    && !(env[0] == '0' && env[1] == '\0');
+}
 
 Power::Power(StaState *sta) :
   StaState(sta),
@@ -1673,6 +1684,8 @@ Power::findSwitchingPower(const Instance *inst,
                           PowerResult &result)
 {
   LibertyCell *scene_cell = cell->sceneCell(scene, MinMax::max());
+  // Opt-in: STA_POWER_GLITCH_ESTIMATE=1 enables the glitch estimate.
+  bool is_combinational = !cell->hasSequentials() && glitchEstimateEnabled();
   InstancePinIterator *pin_iter = network_->pinIterator(inst);
   while (pin_iter->hasNext()) {
     const Pin *to_pin = pin_iter->next();
@@ -1684,12 +1697,30 @@ Power::findSwitchingPower(const Instance *inst,
       PwrActivity activity = findActivity(to_pin);
       if (to_port->direction()->isAnyOutput()) {
         float volt = portVoltage(scene_cell, to_port, scene, MinMax::max());
-        float switching = .5 * load_cap * volt * volt * activity.density();
+        float density = activity.density();
+        // For combinational cells with propagated activities (not directly
+        // from VCD), add glitch transitions from arrival time differences
+        // across input timing arcs.
+        if (is_combinational
+            && activity.origin() != PwrActivityOrigin::vcd) {
+          float glitch = estimateGlitchDensity(to_pin, inst, cell, scene);
+          if (glitch > 0.0) {
+            debugPrint(debug_, "power", 2,
+                       "glitch {}/{} base_density = {:.2e} "
+                       "glitch_density = {:.2e}",
+                       cell->name(),
+                       to_port->name(),
+                       density,
+                       glitch);
+            density += glitch;
+          }
+        }
+        float switching = .5 * load_cap * volt * volt * density;
         debugPrint(debug_, "power", 2,
                    "switching {}/{} activity = {:.2e} volt = {:.2f} {:.3e}",
                    cell->name(),
                    to_port->name(),
-                   activity.density(),
+                   density,
                    volt,
                    switching);
         result.incrSwitching(switching);
@@ -1697,6 +1728,110 @@ Power::findSwitchingPower(const Instance *inst,
     }
   }
   delete pin_iter;
+}
+
+// Estimate glitch-induced transition density at an output pin.
+// When multiple inputs to a combinational cell switch at different
+// times, the output may experience spurious glitch transitions.
+// For each pair of active input timing arcs, estimate the glitch
+// probability from the arc delay difference relative to the output
+// slew.  Glitch transitions add to the effective switching density.
+float
+Power::estimateGlitchDensity(const Pin *output_pin,
+                             const Instance *inst,
+                             LibertyCell *cell,
+                             const Scene *scene)
+{
+  Vertex *out_vertex, *out_bidir;
+  graph_->pinVertices(output_pin, out_vertex, out_bidir);
+  if (!out_vertex)
+    return 0.0;
+
+  DcalcAPIndex ap_index = scene->dcalcAnalysisPtIndex(MinMax::max());
+
+  // Get output slew as the glitch window reference.
+  float out_slew_rise = delayAsFloat(graph_->slew(out_vertex,
+                                                  RiseFall::rise(),
+                                                  ap_index));
+  float out_slew_fall = delayAsFloat(graph_->slew(out_vertex,
+                                                  RiseFall::fall(),
+                                                  ap_index));
+  float out_slew = std::max(out_slew_rise, out_slew_fall);
+  if (out_slew <= 0.0)
+    return 0.0;
+
+  // Collect arc delays and input activities for each input-to-output arc.
+  struct ArcInfo {
+    float delay;      // representative arc delay
+    float density;    // input pin activity density
+  };
+  std::vector<ArcInfo> arcs;
+
+  VertexInEdgeIterator edge_iter(out_vertex, graph_);
+  while (edge_iter.hasNext()) {
+    Edge *edge = edge_iter.next();
+    if (edge->isWire())
+      continue;
+    const TimingRole *role = edge->role();
+    if (role != TimingRole::combinational()
+        && role != TimingRole::tristateEnable())
+      continue;
+
+    TimingArcSet *arc_set = edge->timingArcSet();
+    if (!arc_set)
+      continue;
+
+    // Get input pin activity.
+    Vertex *in_vertex = edge->from(graph_);
+    const Pin *in_pin = in_vertex->pin();
+    PwrActivity in_act = findActivity(in_pin);
+    if (in_act.density() <= 0.0)
+      continue;
+
+    // Use the average arc delay across rise/fall transitions.
+    float delay_sum = 0.0;
+    int delay_count = 0;
+    for (const TimingArc *arc : arc_set->arcs()) {
+      ArcDelay ad = graph_->arcDelay(edge, arc, ap_index);
+      delay_sum += delayAsFloat(ad);
+      delay_count++;
+    }
+    if (delay_count == 0)
+      continue;
+
+    arcs.push_back({delay_sum / delay_count, in_act.density()});
+  }
+
+  // Need at least 2 active input arcs for glitch interference.
+  if (arcs.size() < 2)
+    return 0.0;
+
+  // For each pair of input arcs, estimate glitch probability from
+  // the arc delay difference.  If the delay difference is less than
+  // the output slew, the output may glitch.
+  float glitch_density = 0.0;
+  float period = clockMinPeriod(scene->mode()->sdc());
+  if (period <= 0.0)
+    return 0.0;
+
+  for (size_t i = 0; i < arcs.size(); i++) {
+    for (size_t j = i + 1; j < arcs.size(); j++) {
+      float delay_diff = std::abs(arcs[i].delay - arcs[j].delay);
+      if (delay_diff < out_slew) {
+        // Glitch probability: peaks when delay_diff ≈ out_slew/2
+        // (simultaneous arrivals → clean transition, not glitch).
+        float x = delay_diff / out_slew;
+        float glitch_prob = 4.0f * x * (1.0f - x);
+        // Each glitch contributes ~1 equivalent transition (partial
+        // glitches don't reach full rail-to-rail swing).
+        float prob_i = std::min(1.0f, arcs[i].density * period * 0.5f);
+        float prob_j = std::min(1.0f, arcs[j].density * period * 0.5f);
+        glitch_density += prob_i * prob_j * 1.0f / period * glitch_prob;
+      }
+    }
+  }
+
+  return glitch_density;
 }
 
 ////////////////////////////////////////////////////////////////

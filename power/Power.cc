@@ -1685,7 +1685,7 @@ Power::findSwitchingPower(const Instance *inst,
 {
   LibertyCell *scene_cell = cell->sceneCell(scene, MinMax::max());
   // Opt-in: STA_POWER_GLITCH_ESTIMATE=1 enables the glitch estimate.
-  bool is_combinational = !cell->hasSequentials() && glitchEstimateEnabled();
+  bool is_combinational = !cell->isSequential() && glitchEstimateEnabled();
   InstancePinIterator *pin_iter = network_->pinIterator(inst);
   while (pin_iter->hasNext()) {
     const Pin *to_pin = pin_iter->next();
@@ -1703,7 +1703,7 @@ Power::findSwitchingPower(const Instance *inst,
         // across input timing arcs.
         if (is_combinational
             && activity.origin() != PwrActivityOrigin::vcd) {
-          float glitch = estimateGlitchDensity(to_pin, inst, cell, scene);
+          float glitch = estimateGlitchDensity(to_pin, scene);
           if (glitch > 0.0) {
             debugPrint(debug_, "power", 2,
                        "glitch {}/{} base_density = {:.2e} "
@@ -1738,8 +1738,6 @@ Power::findSwitchingPower(const Instance *inst,
 // slew.  Glitch transitions add to the effective switching density.
 float
 Power::estimateGlitchDensity(const Pin *output_pin,
-                             const Instance *inst,
-                             LibertyCell *cell,
                              const Scene *scene)
 {
   Vertex *out_vertex, *out_bidir;
@@ -1818,8 +1816,9 @@ Power::estimateGlitchDensity(const Pin *output_pin,
     for (size_t j = i + 1; j < arcs.size(); j++) {
       float delay_diff = std::abs(arcs[i].delay - arcs[j].delay);
       if (delay_diff < out_slew) {
-        // Glitch probability: peaks when delay_diff ≈ out_slew/2
-        // (simultaneous arrivals → clean transition, not glitch).
+        // Glitch probability: zero for simultaneous arrivals (a clean
+        // transition) and for a spread of a full output slew or more,
+        // peaking when delay_diff is half the output slew.
         float x = delay_diff / out_slew;
         float glitch_prob = 4.0f * x * (1.0f - x);
         // Each glitch contributes ~1 equivalent transition (partial

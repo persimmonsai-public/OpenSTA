@@ -1,0 +1,94 @@
+library (power_glitch_estimate) {
+  delay_model : table_lookup;
+  time_unit : "1ns";
+  voltage_unit : "1V";
+  current_unit : "1mA";
+  leakage_power_unit : "1nW";
+  capacitive_load_unit (1,ff);
+  pulling_resistance_unit : "1kohm";
+  nom_process : 1.0;
+  nom_temperature : 25.0;
+  nom_voltage : 1.1;
+  voltage_map (VDD, 1.1);
+  voltage_map (VSS, 0.0);
+  default_operating_conditions : typical;
+  operating_conditions (typical) {
+    process : 1.0;
+    temperature : 25.0;
+    voltage : 1.1;
+  }
+
+  /* Two-input gate whose input arcs have different delays. */
+  cell (XOR2) {
+    pg_pin (VDD) { pg_type : primary_power; voltage_name : VDD; }
+    pg_pin (VSS) { pg_type : primary_ground; voltage_name : VSS; }
+    pin (A) { direction : input; capacitance : 1.0; }
+    pin (B) { direction : input; capacitance : 1.0; }
+    pin (Z) {
+      direction : output;
+      related_power_pin : VDD;
+      related_ground_pin : VSS;
+      function : "(A & !B) | (!A & B)";
+      max_capacitance : 100.0;
+      timing () {
+        related_pin : "A";
+        timing_sense : non_unate;
+        cell_rise (scalar) { values ("0.10"); }
+        cell_fall (scalar) { values ("0.10"); }
+        rise_transition (scalar) { values ("0.10"); }
+        fall_transition (scalar) { values ("0.10"); }
+      }
+      timing () {
+        related_pin : "B";
+        timing_sense : non_unate;
+        cell_rise (scalar) { values ("0.14"); }
+        cell_fall (scalar) { values ("0.14"); }
+        rise_transition (scalar) { values ("0.10"); }
+        fall_transition (scalar) { values ("0.10"); }
+      }
+      internal_power () {
+        related_pin : "A";
+        related_pg_pin : VDD;
+        rise_power (scalar) { values ("1.0"); }
+        fall_power (scalar) { values ("1.0"); }
+      }
+    }
+  }
+
+  /* Same gate with identical input arcs, so no glitch is estimated. */
+  cell (XOR2_BAL) {
+    pg_pin (VDD) { pg_type : primary_power; voltage_name : VDD; }
+    pg_pin (VSS) { pg_type : primary_ground; voltage_name : VSS; }
+    pin (A) { direction : input; capacitance : 1.0; }
+    pin (B) { direction : input; capacitance : 1.0; }
+    pin (Z) {
+      direction : output;
+      related_power_pin : VDD;
+      related_ground_pin : VSS;
+      function : "(A & !B) | (!A & B)";
+      max_capacitance : 100.0;
+      timing () {
+        related_pin : "A";
+        timing_sense : non_unate;
+        cell_rise (scalar) { values ("0.10"); }
+        cell_fall (scalar) { values ("0.10"); }
+        rise_transition (scalar) { values ("0.10"); }
+        fall_transition (scalar) { values ("0.10"); }
+      }
+      timing () {
+        related_pin : "B";
+        timing_sense : non_unate;
+        cell_rise (scalar) { values ("0.10"); }
+        cell_fall (scalar) { values ("0.10"); }
+        rise_transition (scalar) { values ("0.10"); }
+        fall_transition (scalar) { values ("0.10"); }
+      }
+      internal_power () {
+        related_pin : "A";
+        related_pg_pin : VDD;
+        rise_power (scalar) { values ("1.0"); }
+        fall_power (scalar) { values ("1.0"); }
+      }
+    }
+  }
+}

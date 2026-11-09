@@ -1,0 +1,18 @@
+default
+    Internal   Switching     Leakage       Total
+       Power       Power       Power       Power (Watts)
+------------------------------------------------
+ 3.20000e-08 1.93600e-10 0.00000e+00 3.21936e-08 u_skew
+ 3.20000e-08 1.93600e-10 0.00000e+00 3.21936e-08 u_bal
+STA_POWER_GLITCH_ESTIMATE=0
+    Internal   Switching     Leakage       Total
+       Power       Power       Power       Power (Watts)
+------------------------------------------------
+ 3.20000e-08 1.93600e-10 0.00000e+00 3.21936e-08 u_skew
+ 3.20000e-08 1.93600e-10 0.00000e+00 3.21936e-08 u_bal
+STA_POWER_GLITCH_ESTIMATE=1
+    Internal   Switching     Leakage       Total
+       Power       Power       Power       Power (Watts)
+------------------------------------------------
+ 3.20000e-08 1.99408e-10 0.00000e+00 3.21994e-08 u_skew
+ 3.20000e-08 1.93600e-10 0.00000e+00 3.21936e-08 u_bal

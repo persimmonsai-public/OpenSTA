@@ -204,8 +204,6 @@ protected:
   // Estimate additional transition density from timing-arc arrival
   // time differences causing glitch transitions at the output.
   float estimateGlitchDensity(const Pin *output_pin,
-                              const Instance *inst,
-                              LibertyCell *cell,
                               const Scene *scene);
   float getSlew(Vertex *vertex,
                 const RiseFall *rf,

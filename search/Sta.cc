@@ -773,6 +773,7 @@ Sta::readLibertyAfter(LibertyLibrary *liberty,
   for (const MinMax *mm : min_max->range())
     scene->addLiberty(liberty, mm);
   LibertyLibrary::makeSceneMap(liberty, scene, min_max, network_, report_);
+  liberty_scenes_checked_ = false;
 }
 
 bool
@@ -3876,6 +3877,15 @@ Sta::ensureLibLinked()
   // liberty files so check for them here.
   if (network_->defaultLibertyLibrary() == nullptr)
     report_->error(2141, "No liberty libraries found.");
+  // Liberty files read after the network is linked (the OpenROAD db is
+  // linked before its liberty files are read) are not seen by the link
+  // time check that every cell in the network has a liberty cell for
+  // every scene, and LibertyPort::scenePort returns nullptr for the
+  // missing ones.
+  if (!liberty_scenes_checked_) {
+    network_->checkNetworkLibertyScenes();
+    liberty_scenes_checked_ = true;
+  }
   // Return cmd/sdc network.
   return cmd_network_;
 }

@@ -1776,6 +1776,9 @@ protected:
   ReportPath *report_path_{nullptr};
   Tcl_Interp *tcl_interp_{nullptr};
   bool update_genclks_{false};
+  // False after a liberty file is read until ensureLibLinked has checked that
+  // every liberty cell in the network has a cell for every scene.
+  bool liberty_scenes_checked_{true};
   EquivCells *equiv_cells_{nullptr};
 
   // Singleton sta used by tcl command interpreter.
